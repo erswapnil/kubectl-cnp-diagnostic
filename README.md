@@ -39,7 +39,27 @@ The tool generates a comprehensive `.tar.gz` package including:
     * **Blocking Analysis**: Advanced detection of blocked PIDs and blocking statements.
     * **Storage**: Table and Index bloat reports with live/dead tuple counts.
     * **Maintenance**: Extension lists, database versions, and `SHOW ALL` parameters.
+---
 
+## 📋 Usage Example
+
+### Execution Flow:
+```
+$ kubectl edbdiag
+Enter the Namespace of the Cluster: default
+Enter the Cluster Name: postgresql-advanced-cluster
+Select Operator Variant:
+1) CNP (Cloud Native Postgres - EDB)
+2) CNPG (CloudNativePG - Community)
+Enter choice [1 or 2]: 1
+
+--- Processing Pod: postgresql-advanced-cluster-1 ---
+   -> Collecting from Database: postgres
+   -> Collecting from Database: edb
+   -> Collecting from Database: app
+...
+Collection complete: edb_diag_postgresql-advanced-cluster_20260331_132227.tar.gz
+```
 ---
 
 ## 📋 Generated Result Structure
