@@ -68,27 +68,39 @@ The tool organizes results by pod and database for easy troubleshooting:
 
 ```
 .
+.
 ├── cluster_info/
-│   ├── cluster_status.txt      # High-level health and node roles
-│   └── namespace_events.txt    # K8s events (Pod restarts, OOMKills, etc.)
+│   ├── cluster_status.txt      # High-level health, node roles, and LSN
+│   ├── cluster_definition.yaml  # Full YAML manifest of the Cluster resource
+│   ├── available_backups.txt   # List of Barman/Cloud backups and their phases
+│   └── namespace_events.txt    # Kubernetes events (OOMKills, restarts, etc.)
 ├── operator_info/
-│   ├── logs/operator.log       # EDB/CNPG Operator controller logs
-│   └── operator_version.txt    # Current operator image version
+│   ├── operator_version.txt    # EDB/CNPG Operator image version
+│   ├── operator_manifest.yaml  # Deployment manifest for the controller
+│   ├── barman_plugin_version.txt # Version of the Barman Cloud plugin (if present)
+│   └── logs/operator.log       # Live controller logs for the operator
 ├── pods/
-│   └── <pod-name>/
+│   └── <pod-name>/             # Data for each instance (Primary/Standbys)
+│       ├── describe_result.txt # 'kubectl describe' output for the pod
 │       └── postgresql/
-│           ├── activity_counts.out   # Summary: Active vs Idle vs Total sessions
-│           ├── show_all.out          # Full list of GUCs/Parameters (SHOW ALL)
-│           ├── replication.out       # Streaming and Slot status
-│           ├── db_<database_name>/
-│           │   ├── blocking_analysis_detailed.out  # Deep dive into "Who is blocking whom"
-│           │   ├── blocking_summary.out            # Quick list of PIDs being blocked
-│           │   ├── pg_locks.out                    # Raw internal lock state [cite: 22]
-│           │   ├── pg_stat_activity.out            # Full process list for this specific DB [cite: 22]
-│           │   ├── database_bloat.out              # Table-level dead tuples and size
-│           │   ├── index_bloat.out                 # Index size and scan frequency
-│           │   └── table_tuples.out                # Live vs Dead tuple counts
-│           └── postgres.log          # Raw database engine log file
+│           ├── activity_counts.out # Breakdown: Active, Idle, and Total sessions
+│           ├── db_version.out      # Full PostgreSQL version string
+│           ├── show_all.out        # Full GUC/Parameter list (SHOW ALL)
+│           ├── replication.out     # Streaming replication lag and state
+│           ├── replication_slots.out # Status of physical/logical replication slots
+│           ├── bgwriter.out        # Background writer and checkpointer stats
+│           ├── archiver.out        # WAL archiving success/failure metrics
+│           ├── db_<database_name>/ # Deep-dive for EVERY database in the cluster
+│           │   ├── blocking_analysis_detailed.out # Detailed "Who is blocking whom" report
+│           │   ├── blocking_summary.out # Quick list of blocked vs blocking PIDs
+│           │   ├── pg_locks.out         # Raw lock state for the specific DB
+│           │   ├── pg_stat_activity.out # Full process list for this specific DB
+│           │   ├── database_bloat.out   # Table-level dead tuples and bloat size
+│           │   ├── index_bloat.out      # Index size and scan frequency
+│           │   ├── extensions.out       # List of installed PG extensions
+│           │   └── table_tuples.out     # Live vs Dead tuple counts
+│           └── postgres.log        # Raw engine logs from the 'postgres' container
 └── storage/
-    └── pvc_list.txt            # PVC/PV status and disk allocations
+    ├── pvc_list.txt            # PVC status, capacity, and storage class
+    └── all_pv_list.txt         # Global PV list with reclaim policies
 ```
