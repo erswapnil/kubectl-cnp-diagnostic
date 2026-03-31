@@ -41,17 +41,14 @@ for POD in $PODS; do
     POD_DIR="$MAIN_DIR/pods/$POD"
     mkdir -p "$POD_DIR/postgresql"
 
-    # 1. Configuration Check
+    # Capture Global Data (Non-database specific)
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SHOW ALL;" > "$POD_DIR/postgresql/show_all.out" 2>/dev/null
     
-    # 2. Activity Count with Total (Single-line query for stability)
-    QUERY="SELECT COALESCE(state, 'internal/background') AS state, count(*) FROM pg_stat_activity GROUP BY 1 UNION ALL SELECT 'Total', count(*) FROM pg_stat_activity ORDER BY (state = 'Total') ASC, count DESC;"
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "$QUERY" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null
+    # Activity Count with Total
+    QUERY_ACT="SELECT COALESCE(state, 'internal/background') AS state, count(*) FROM pg_stat_activity GROUP BY 1 UNION ALL SELECT 'Total', count(*) FROM pg_stat_activity ORDER BY (state = 'Total') ASC, count DESC;"
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "$QUERY_ACT" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null
 
-    # 3. Running Activity (Full List)
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_activity;" > "$POD_DIR/postgresql/running_activity.out" 2>/dev/null
-    
-    # 4. Replication Status
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_replication;" > "$POD_DIR/postgresql/replication.out" 2>/dev/null
 
     # Get list of user databases
@@ -66,16 +63,31 @@ for POD in $PODS; do
             kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -d "$DB" -c "$1" > "$DB_SUBDIR/$2" 2>/dev/null
         }
 
+        # Original Diagnostics [cite: 20, 21, 22, 23]
         run_db_sql "SELECT * FROM pg_available_extensions WHERE installed_version IS NOT NULL;" "extensions.out"
         run_db_sql "SELECT * FROM pg_stat_user_tables;" "pg_stat_user_tables.out"
         run_db_sql "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables ORDER BY 3 DESC;" "table_tuples.out"
         run_db_sql "SELECT schemaname, relname, pg_size_pretty(pg_relation_size(relid)) as actual_size, n_dead_tup, last_autovacuum FROM pg_stat_all_tables ORDER BY n_dead_tup DESC;" "database_bloat.out"
         run_db_sql "SELECT schemaname, relname, indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS index_size, idx_scan FROM pg_stat_user_indexes ORDER BY pg_relation_size(indexrelid) DESC;" "index_bloat.out"
+
+        # 1. NEW: Detailed Locks and Activity per DB
+        run_db_sql "SELECT * FROM pg_locks;" "pg_locks.out"
+        run_db_sql "SELECT * FROM pg_stat_activity;" "pg_stat_activity.out"
+
+        # 2. NEW: Blocking Query (pg_locks + pg_stat_activity JOIN)
+        BLOCK_QUERY_1="SELECT blocked_locks.pid AS blocked_pid, blocked_activity.usename AS blocked_user, now() - blocked_activity.query_start AS blocked_duration, blocking_locks.pid AS blocking_pid, blocking_activity.usename AS blocking_user, now() - blocking_activity.query_start AS blocking_duration, blocked_activity.query AS blocked_statement, blocking_activity.query AS blocking_statement FROM pg_catalog.pg_locks AS blocked_locks JOIN pg_catalog.pg_stat_activity AS blocked_activity ON blocked_activity.pid = blocked_locks.pid JOIN pg_catalog.pg_locks AS blocking_locks ON blocking_locks.locktype = blocked_locks.locktype AND blocking_locks.DATABASE IS NOT DISTINCT FROM blocked_locks.DATABASE AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation AND blocking_locks.page IS NOT DISTINCT FROM blocked_locks.page AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid AND blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid AND blocking_locks.objid IS NOT DISTINCT FROM blocked_locks.objid AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid AND blocking_locks.pid != blocked_locks.pid JOIN pg_catalog.pg_stat_activity AS blocking_activity ON blocking_activity.pid = blocking_locks.pid WHERE NOT blocked_locks.granted;"
+        run_db_sql "$BLOCK_QUERY_1" "blocking_analysis_detailed.out"
+
+        # 3. NEW: Blocking Summary (pg_blocking_pids)
+        BLOCK_QUERY_2="SELECT activity.pid, activity.usename, activity.query, blocking.pid AS blocking_id, blocking.query AS blocking_query FROM pg_stat_activity AS activity JOIN pg_stat_activity AS blocking ON blocking.pid = ANY(pg_blocking_pids(activity.pid));"
+        run_db_sql "$BLOCK_QUERY_2" "blocking_summary.out"
     done
 
+    # Logs and Describe
     kubectl describe pod "$POD" -n "$NAMESPACE" > "$POD_DIR/describe_result.txt"
     kubectl logs "$POD" -n "$NAMESPACE" -c postgres > "$POD_DIR/postgresql/postgres.log"
 done
 
+# Packaging
 tar -czf "${MAIN_DIR}.tar.gz" "$MAIN_DIR"
 echo "Collection complete: ${MAIN_DIR}.tar.gz"
