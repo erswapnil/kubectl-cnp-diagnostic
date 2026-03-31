@@ -63,7 +63,7 @@ for POD in $PODS; do
             kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -d "$DB" -c "$1" > "$DB_SUBDIR/$2" 2>/dev/null
         }
 
-        # Original Diagnostics [cite: 20, 21, 22, 23]
+        # Original Diagnostics 
         run_db_sql "SELECT * FROM pg_available_extensions WHERE installed_version IS NOT NULL;" "extensions.out"
         run_db_sql "SELECT * FROM pg_stat_user_tables;" "pg_stat_user_tables.out"
         run_db_sql "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables ORDER BY 3 DESC;" "table_tuples.out"
