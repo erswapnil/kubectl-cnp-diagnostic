@@ -4,7 +4,7 @@ set -e
 # Repository Configuration
 OWNER="erswapnil"
 REPO="cnp-diagnostic"
-BINARY="cnp-diagnostic"
+BINARY="kubectl-cnp-diagnostic"
 INSTALL_PATH="/usr/local/bin"
 
 echo "Installing $BINARY from $OWNER/$REPO..."
