@@ -23,4 +23,4 @@ else
     sudo mv "$BINARY" "$INSTALL_PATH/"
 fi
 
-echo "Installation successful! Run it using: kubectl cnp-diagnostic"
+echo "Installation successful! Run it using: kubectl edbdiag"
