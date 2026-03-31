@@ -10,71 +10,78 @@ echo "1) CNP (Cloud Native Postgres - EDB)"
 echo "2) CNPG (CloudNativePG - Community)"
 read -p "Enter choice [1 or 2]: " VARIANT_CHOICE
 
-OP_CMD=$([ "$VARIANT_CHOICE" == "1" ] && echo "cnp" || echo "cnpg")
+OP_CMD=$([ "$VARIANT_CHOICE" == "1" ] && echo "cnp" || echo "cnpg") [cite: 34]
 
 # 1. Directory Setup
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MAIN_DIR="edb_diag_${CLUSTER_NAME}_${TIMESTAMP}"
-mkdir -p "$MAIN_DIR/cluster_info" "$MAIN_DIR/operator_info/logs" "$MAIN_DIR/pods" "$MAIN_DIR/storage"
+mkdir -p "$MAIN_DIR/cluster_info" "$MAIN_DIR/operator_info/logs" "$MAIN_DIR/pods" "$MAIN_DIR/storage" [cite: 34]
 
 # 2. Operator Discovery
-OP_POD_INFO=$(kubectl get pods -A -l app.kubernetes.io/name=cloud-native-postgresql --no-headers | head -n 1)
+OP_POD_INFO=$(kubectl get pods -A -l app.kubernetes.io/name=cloud-native-postgresql --no-headers | head -n 1) [cite: 34]
 OP_NS=$(echo "$OP_POD_INFO" | awk '{print $1}')
 OP_POD_NAME=$(echo "$OP_POD_INFO" | awk '{print $2}')
 
-if [ ! -z "$OP_POD_NAME" ]; then
-    kubectl get pod "$OP_POD_NAME" -n "$OP_NS" -o jsonpath='{.spec.containers[0].image}' > "$MAIN_DIR/operator_info/operator_version.txt"
-    kubectl get deployment -n "$OP_NS" -l app.kubernetes.io/name=cloud-native-postgresql -o yaml > "$MAIN_DIR/operator_info/operator_manifest.yaml"
-    kubectl logs "$OP_POD_NAME" -n "$OP_NS" > "$MAIN_DIR/operator_info/logs/operator.log"
+if [ ! -z "$OP_POD_NAME" ]; then [cite: 34, 35]
+    kubectl get pod "$OP_POD_NAME" -n "$OP_NS" -o jsonpath='{.spec.containers[0].image}' > "$MAIN_DIR/operator_info/operator_version.txt" [cite: 35]
+    kubectl get deployment -n "$OP_NS" -l app.kubernetes.io/name=cloud-native-postgresql -o yaml > "$MAIN_DIR/operator_info/operator_manifest.yaml" [cite: 35]
+    kubectl logs "$OP_POD_NAME" -n "$OP_NS" > "$MAIN_DIR/operator_info/logs/operator.log" [cite: 35]
 fi
 
 # 3. Cluster Level Diagnostics
-kubectl "$OP_CMD" status "$CLUSTER_NAME" -n "$NAMESPACE" > "$MAIN_DIR/cluster_info/cluster_status.txt"
-kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' > "$MAIN_DIR/cluster_info/namespace_events.txt"
+kubectl "$OP_CMD" status "$CLUSTER_NAME" -n "$NAMESPACE" > "$MAIN_DIR/cluster_info/cluster_status.txt" [cite: 35]
+kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' > "$MAIN_DIR/cluster_info/namespace_events.txt" [cite: 35]
 
 # 4. Pod & Multi-Database Specific Diagnostics
-PODS=$(kubectl get pods -n "$NAMESPACE" -l "cnpg.io/cluster=$CLUSTER_NAME" -o jsonpath='{.items[*].metadata.name}')
-[ -z "$PODS" ] && PODS=$(kubectl get pods -n "$NAMESPACE" --no-headers -o custom-columns=":metadata.name" | grep "^${CLUSTER_NAME}-")
+PODS=$(kubectl get pods -n "$NAMESPACE" -l "cnpg.io/cluster=$CLUSTER_NAME" -o jsonpath='{.items[*].metadata.name}') [cite: 35]
+[ -z "$PODS" ] && PODS=$(kubectl get pods -n "$NAMESPACE" --no-headers -o custom-columns=":metadata.name" | grep "^${CLUSTER_NAME}-") [cite: 35]
 
-for POD in $PODS; do
+for POD in $PODS; do [cite: 35, 36]
     echo "--- Processing Pod: $POD ---"
     POD_DIR="$MAIN_DIR/pods/$POD"
-    mkdir -p "$POD_DIR/postgresql"
+    mkdir -p "$POD_DIR/postgresql" [cite: 36]
 
     # Capture Global Data (Non-database specific)
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SHOW ALL;" > "$POD_DIR/postgresql/show_all.out" 2>/dev/null
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT state, count(*) FROM pg_stat_activity GROUP BY state;" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_activity;" > "$POD_DIR/postgresql/running_activity.out" 2>/dev/null
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_replication;" > "$POD_DIR/postgresql/replication.out" 2>/dev/null
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SHOW ALL;" > "$POD_DIR/postgresql/show_all.out" 2>/dev/null [cite: 36, 37]
+    
+    # --- UPDATED ACTIVITY QUERY ---
+    # This captures active, idle, idle_in_transaction, background processes, and a Total row.
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "
+        SELECT COALESCE(state, 'internal/background') AS state, count(*) 
+        FROM pg_stat_activity 
+        GROUP BY state 
+        UNION ALL 
+        SELECT 'Total', count(*) FROM pg_stat_activity 
+        ORDER BY (state = 'Total') ASC, count DESC;" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null 
 
-    # Get list of all user databases (excluding templates)
-    DB_LIST=$(kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -t -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datname LIKE 'template%';" | xargs)
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_activity;" > "$POD_DIR/postgresql/running_activity.out" 2>/dev/null [cite: 38, 39]
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_replication;" > "$POD_DIR/postgresql/replication.out" 2>/dev/null [cite: 39, 40]
 
-    for DB in $DB_LIST; do
+    # Get list of all user databases
+    DB_LIST=$(kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -t -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datname LIKE 'template%';" | xargs) [cite: 40]
+
+    for DB in $DB_LIST; do [cite: 40, 41]
         echo "   -> Collecting from Database: $DB"
         DB_SUBDIR="$POD_DIR/postgresql/db_$DB"
-        mkdir -p "$DB_SUBDIR"
+        mkdir -p "$DB_SUBDIR" [cite: 41]
 
         run_db_sql() {
             kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -d "$DB" -c "$1" > "$DB_SUBDIR/$2" 2>/dev/null
         }
 
         # 5. Specific Requests per Database
-        run_db_sql "SELECT * FROM pg_available_extensions WHERE installed_version IS NOT NULL;" "extensions.out"
-        run_db_sql "SELECT * FROM pg_stat_user_tables;" "pg_stat_user_tables.out"
-        run_db_sql "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables ORDER BY 3 DESC;" "table_tuples.out"
-        
-        # Comprehensive Bloat (All schemas)
-        run_db_sql "SELECT schemaname, relname, pg_size_pretty(pg_relation_size(relid)) as actual_size, n_dead_tup, last_autovacuum FROM pg_stat_all_tables ORDER BY n_dead_tup DESC;" "database_bloat.out"
-        
-        run_db_sql "SELECT schemaname, relname, indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS index_size, idx_scan FROM pg_stat_user_indexes ORDER BY pg_relation_size(indexrelid) DESC;" "index_bloat.out"
+        run_db_sql "SELECT * FROM pg_available_extensions WHERE installed_version IS NOT NULL;" "extensions.out" [cite: 41, 42, 43]
+        run_db_sql "SELECT * FROM pg_stat_user_tables;" "pg_stat_user_tables.out" [cite: 43, 44]
+        run_db_sql "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables ORDER BY 3 DESC;" "table_tuples.out" [cite: 44, 45]
+        run_db_sql "SELECT schemaname, relname, pg_size_pretty(pg_relation_size(relid)) as actual_size, n_dead_tup, last_autovacuum FROM pg_stat_all_tables ORDER BY n_dead_tup DESC;" "database_bloat.out" [cite: 45, 46]
+        run_db_sql "SELECT schemaname, relname, indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS index_size, idx_scan FROM pg_stat_user_indexes ORDER BY pg_relation_size(indexrelid) DESC;" "index_bloat.out" [cite: 46, 47]
     done
 
     # Logs and Describe
-    kubectl describe pod "$POD" -n "$NAMESPACE" > "$POD_DIR/describe_result.txt"
-    kubectl logs "$POD" -n "$NAMESPACE" -c postgres > "$POD_DIR/postgresql/postgres.log"
+    kubectl describe pod "$POD" -n "$NAMESPACE" > "$POD_DIR/describe_result.txt" [cite: 47]
+    kubectl logs "$POD" -n "$NAMESPACE" -c postgres > "$POD_DIR/postgresql/postgres.log" [cite: 47]
 done
 
 # 6. Packaging
-tar -czf "${MAIN_DIR}.tar.gz" "$MAIN_DIR"
-echo "Collection complete: ${MAIN_DIR}.tar.gz"
+tar -czf "${MAIN_DIR}.tar.gz" "$MAIN_DIR" [cite: 47]
+echo "Collection complete: ${MAIN_DIR}.tar.gz" [cite: 47]
