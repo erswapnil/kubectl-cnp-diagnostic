@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# --- EDB/Postgres Cluster Diagnostic Collector (Multi-DB aware) ---
+# --- EDB/Postgres Cluster Diagnostic Collector (Master Version) ---
 
 read -p "Enter the Namespace of the Cluster: " NAMESPACE
 read -p "Enter the Cluster Name: " CLUSTER_NAME
@@ -17,7 +17,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 MAIN_DIR="edb_diag_${CLUSTER_NAME}_${TIMESTAMP}"
 mkdir -p "$MAIN_DIR/cluster_info" "$MAIN_DIR/operator_info/logs" "$MAIN_DIR/pods" "$MAIN_DIR/storage"
 
-# 2. Operator Discovery
+echo "Starting comprehensive collection..."
+
+# 2. Operator Discovery & Versioning (Merged)
 OP_POD_INFO=$(kubectl get pods -A -l app.kubernetes.io/name=cloud-native-postgresql --no-headers | head -n 1)
 OP_NS=$(echo "$OP_POD_INFO" | awk '{print $1}')
 OP_POD_NAME=$(echo "$OP_POD_INFO" | awk '{print $2}')
@@ -28,9 +30,22 @@ if [ ! -z "$OP_POD_NAME" ]; then
     kubectl logs "$OP_POD_NAME" -n "$OP_NS" > "$MAIN_DIR/operator_info/logs/operator.log"
 fi
 
-# 3. Cluster Level Diagnostics
+# Capture Barman Plugin Version (from old script)
+BARMAN_POD_INFO=$(kubectl get pods -A --no-headers | grep "barman-cloud" | head -n 1)
+if [ ! -z "$BARMAN_POD_INFO" ]; then
+    B_NS=$(echo $BARMAN_POD_INFO | awk '{print $1}')
+    B_NAME=$(echo $BARMAN_POD_INFO | awk '{print $2}')
+    kubectl get pod "$B_NAME" -n "$B_NS" -o jsonpath='{.spec.containers[0].image}' > "$MAIN_DIR/operator_info/barman_plugin_version.txt"
+fi
+
+# 3. Cluster Level Diagnostics (Restored missing commands)
+echo "[*] Collecting Cluster and Storage info..."
+kubectl get cluster "$CLUSTER_NAME" -n "$NAMESPACE" -o yaml > "$MAIN_DIR/cluster_info/cluster_definition.yaml"
 kubectl "$OP_CMD" status "$CLUSTER_NAME" -n "$NAMESPACE" > "$MAIN_DIR/cluster_info/cluster_status.txt"
+kubectl get backup -n "$NAMESPACE" > "$MAIN_DIR/cluster_info/available_backups.txt"
 kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' > "$MAIN_DIR/cluster_info/namespace_events.txt"
+kubectl get pvc -n "$NAMESPACE" > "$MAIN_DIR/storage/pvc_list.txt"
+kubectl get pv > "$MAIN_DIR/storage/all_pv_list.txt"
 
 # 4. Pod & Multi-Database Specific Diagnostics
 PODS=$(kubectl get pods -n "$NAMESPACE" -l "cnpg.io/cluster=$CLUSTER_NAME" -o jsonpath='{.items[*].metadata.name}')
@@ -41,17 +56,21 @@ for POD in $PODS; do
     POD_DIR="$MAIN_DIR/pods/$POD"
     mkdir -p "$POD_DIR/postgresql"
 
-    # Capture Global Data (Non-database specific)
+    # Capture Global Data
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT version();" > "$POD_DIR/postgresql/db_version.out" 2>/dev/null
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SHOW ALL;" > "$POD_DIR/postgresql/show_all.out" 2>/dev/null
     
-    # Activity Count with Total
+    # Activity counts with Total row
     QUERY_ACT="SELECT COALESCE(state, 'internal/background') AS state, count(*) FROM pg_stat_activity GROUP BY 1 UNION ALL SELECT 'Total', count(*) FROM pg_stat_activity ORDER BY (state = 'Total') ASC, count DESC;"
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "$QUERY_ACT" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null
 
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_activity;" > "$POD_DIR/postgresql/running_activity.out" 2>/dev/null
+    # Replication and slots (from both scripts)
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_replication;" > "$POD_DIR/postgresql/replication.out" 2>/dev/null
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_replication_slots;" > "$POD_DIR/postgresql/replication_slots.out" 2>/dev/null
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_bgwriter;" > "$POD_DIR/postgresql/bgwriter.out" 2>/dev/null
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_archiver;" > "$POD_DIR/postgresql/archiver.out" 2>/dev/null
 
-    # Get list of user databases
+    # Get list of all user databases
     DB_LIST=$(kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -t -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datname LIKE 'template%';" | xargs)
 
     for DB in $DB_LIST; do
@@ -63,22 +82,17 @@ for POD in $PODS; do
             kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -d "$DB" -c "$1" > "$DB_SUBDIR/$2" 2>/dev/null
         }
 
-        # Original Diagnostics 
         run_db_sql "SELECT * FROM pg_available_extensions WHERE installed_version IS NOT NULL;" "extensions.out"
         run_db_sql "SELECT * FROM pg_stat_user_tables;" "pg_stat_user_tables.out"
         run_db_sql "SELECT relname, n_live_tup, n_dead_tup FROM pg_stat_user_tables ORDER BY 3 DESC;" "table_tuples.out"
         run_db_sql "SELECT schemaname, relname, pg_size_pretty(pg_relation_size(relid)) as actual_size, n_dead_tup, last_autovacuum FROM pg_stat_all_tables ORDER BY n_dead_tup DESC;" "database_bloat.out"
         run_db_sql "SELECT schemaname, relname, indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS index_size, idx_scan FROM pg_stat_user_indexes ORDER BY pg_relation_size(indexrelid) DESC;" "index_bloat.out"
-
-        # 1. NEW: Detailed Locks and Activity per DB
         run_db_sql "SELECT * FROM pg_locks;" "pg_locks.out"
         run_db_sql "SELECT * FROM pg_stat_activity;" "pg_stat_activity.out"
 
-        # 2. NEW: Blocking Query (pg_locks + pg_stat_activity JOIN)
+        # Blocking Queries
         BLOCK_QUERY_1="SELECT blocked_locks.pid AS blocked_pid, blocked_activity.usename AS blocked_user, now() - blocked_activity.query_start AS blocked_duration, blocking_locks.pid AS blocking_pid, blocking_activity.usename AS blocking_user, now() - blocking_activity.query_start AS blocking_duration, blocked_activity.query AS blocked_statement, blocking_activity.query AS blocking_statement FROM pg_catalog.pg_locks AS blocked_locks JOIN pg_catalog.pg_stat_activity AS blocked_activity ON blocked_activity.pid = blocked_locks.pid JOIN pg_catalog.pg_locks AS blocking_locks ON blocking_locks.locktype = blocked_locks.locktype AND blocking_locks.DATABASE IS NOT DISTINCT FROM blocked_locks.DATABASE AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation AND blocking_locks.page IS NOT DISTINCT FROM blocked_locks.page AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid AND blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid AND blocking_locks.objid IS NOT DISTINCT FROM blocked_locks.objid AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid AND blocking_locks.pid != blocked_locks.pid JOIN pg_catalog.pg_stat_activity AS blocking_activity ON blocking_activity.pid = blocking_locks.pid WHERE NOT blocked_locks.granted;"
         run_db_sql "$BLOCK_QUERY_1" "blocking_analysis_detailed.out"
-
-        # 3. NEW: Blocking Summary (pg_blocking_pids)
         BLOCK_QUERY_2="SELECT activity.pid, activity.usename, activity.query, blocking.pid AS blocking_id, blocking.query AS blocking_query FROM pg_stat_activity AS activity JOIN pg_stat_activity AS blocking ON blocking.pid = ANY(pg_blocking_pids(activity.pid));"
         run_db_sql "$BLOCK_QUERY_2" "blocking_summary.out"
     done
@@ -88,6 +102,7 @@ for POD in $PODS; do
     kubectl logs "$POD" -n "$NAMESPACE" -c postgres > "$POD_DIR/postgresql/postgres.log"
 done
 
-# Packaging
+# 5. Packaging
+echo "--------------------------------------------------------"
 tar -czf "${MAIN_DIR}.tar.gz" "$MAIN_DIR"
 echo "Collection complete: ${MAIN_DIR}.tar.gz"
