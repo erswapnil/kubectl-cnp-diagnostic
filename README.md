@@ -8,25 +8,25 @@ You can install the plugin in your system with:
 
 ```
 curl -sSfL \
-  https://github.com/erswapnil/cnp-diagnostic/raw/main/install.sh | \
+  [https://github.com/erswapnil/cnp-diagnostic/raw/main/install.sh](https://github.com/erswapnil/cnp-diagnostic/raw/main/install.sh) | \
   sudo sh -s -- -b /usr/local/bin
 ```
 
 ## Windows install
 
-To install the plugin on Windows, download the `kubectl-cnp-diagnostic` file from this repository.
+To install the plugin on Windows, download the `kubectl-edbdiag` file from this repository.
 
 1. Create a folder for your plugins (e.g., `C:\kubectl-plugins`).
-2. Move the `kubectl-cnp-diagnostic` file into that folder.
+2. Move the `kubectl-edbdiag` file into that folder.
 3. Add the folder path to your system's **PATH** environment variable.
-4. Rename the file to `kubectl-cnp-diagnostic.exe` if using a terminal that requires extensions.
+4. Rename the file to `kubectl-edbdiag.exe` if using a terminal that requires extensions.
 
 ## Usage
 
 Once installed, you can trigger the diagnostic collection using the following command:
 
 ```
-kubectl cnp-diagnostic
+kubectl edbdiag
 ```
 
 The tool will prompt you for the **Namespace**, **Cluster Name**, and **Operator Variant** (CNP or CNPG). It will then generate a comprehensive `.tar.gz` package containing:
