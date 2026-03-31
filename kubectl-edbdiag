@@ -41,16 +41,20 @@ for POD in $PODS; do
     POD_DIR="$MAIN_DIR/pods/$POD"
     mkdir -p "$POD_DIR/postgresql"
 
-    # Capture Global Data (Non-database specific)
+    # 1. Configuration Check
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SHOW ALL;" > "$POD_DIR/postgresql/show_all.out" 2>/dev/null
     
-    # Activity counts with Total row
-    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT COALESCE(state, 'internal/background') AS state, count(*) FROM pg_stat_activity GROUP BY state UNION ALL SELECT 'Total', count(*) FROM pg_stat_activity ORDER BY (state = 'Total') ASC, count DESC;" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null
+    # 2. Activity Count with Total (Single-line query for stability)
+    QUERY="SELECT COALESCE(state, 'internal/background') AS state, count(*) FROM pg_stat_activity GROUP BY 1 UNION ALL SELECT 'Total', count(*) FROM pg_stat_activity ORDER BY (state = 'Total') ASC, count DESC;"
+    kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "$QUERY" > "$POD_DIR/postgresql/activity_counts.out" 2>/dev/null
 
+    # 3. Running Activity (Full List)
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_activity;" > "$POD_DIR/postgresql/running_activity.out" 2>/dev/null
+    
+    # 4. Replication Status
     kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -c "SELECT * FROM pg_stat_replication;" > "$POD_DIR/postgresql/replication.out" 2>/dev/null
 
-    # Get list of all user databases
+    # Get list of user databases
     DB_LIST=$(kubectl exec -n "$NAMESPACE" "$POD" -c postgres -- psql -U postgres -t -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datname LIKE 'template%';" | xargs)
 
     for DB in $DB_LIST; do
@@ -69,11 +73,9 @@ for POD in $PODS; do
         run_db_sql "SELECT schemaname, relname, indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS index_size, idx_scan FROM pg_stat_user_indexes ORDER BY pg_relation_size(indexrelid) DESC;" "index_bloat.out"
     done
 
-    # Logs and Describe
     kubectl describe pod "$POD" -n "$NAMESPACE" > "$POD_DIR/describe_result.txt"
     kubectl logs "$POD" -n "$NAMESPACE" -c postgres > "$POD_DIR/postgresql/postgres.log"
 done
 
-# 6. Packaging
 tar -czf "${MAIN_DIR}.tar.gz" "$MAIN_DIR"
 echo "Collection complete: ${MAIN_DIR}.tar.gz"
