@@ -1,38 +1,87 @@
-# EDB/CNP Diagnostic plugin for `kubectl`
+# 📊 EDB/CNP Diagnostic plugin for `kubectl`
 
-Plugin for `kubectl` to troubleshoot Kubernetes clusters and databases deployed with EDB Postgres for Kubernetes (CNP) or CloudNativePG (CNPG).
+A specialized `kubectl` plugin designed to collect deep diagnostic information from EDB Postgres for Kubernetes (CNP) and CloudNativePG (CNPG) clusters.
 
-## Mac OS and Linux install
+## 🐧 Mac OS and Linux Installation
 
-You can install the plugin in your system with:
+Install the plugin globally using the following command:
 
 ```
-curl -sSfL \
-  [https://github.com/erswapnil/cnp-diagnostic/raw/main/install.sh](https://github.com/erswapnil/cnp-diagnostic/raw/main/install.sh) | \
-  sudo sh -s -- -b /usr/local/bin
+curl -sSfL https://github.com/erswapnil/cnp-diagnostic/raw/main/install.sh | sudo sh
 ```
 
-## Windows install
+> **Note**: This script downloads the `kubectl-edbdiag` binary and installs it to `/usr/local/bin`.
 
-To install the plugin on Windows, download the `kubectl-edbdiag` file from this repository.
+## 🪟 Windows Installation
 
-1. Create a folder for your plugins (e.g., `C:\kubectl-plugins`).
-2. Move the `kubectl-edbdiag` file into that folder.
-3. Add the folder path to your system's **PATH** environment variable.
-4. Rename the file to `kubectl-edbdiag.exe` if using a terminal that requires extensions.
+1. Download the `kubectl-edbdiag` file from this repository.
+2. Create a folder for your plugins (e.g., `C:\kubectl-plugins`).
+3. Move the file into that folder and rename it to `kubectl-edbdiag.exe`.
+4. Add `C:\kubectl-plugins` to your system's **PATH** environment variable.
 
-## Usage
+---
 
-Once installed, you can trigger the diagnostic collection using the following command:
+## 🛠 Usage
+
+Once installed, trigger the diagnostic collection by running:
 
 ```
 kubectl edbdiag
 ```
 
-The tool will prompt you for the **Namespace**, **Cluster Name**, and **Operator Variant** (CNP or CNPG). It will then generate a comprehensive `.tar.gz` package containing:
+### What is collected?
+The tool generates a comprehensive `.tar.gz` package including:
+* **Cluster Level**: Status, full YAML manifests, and namespace events.
+* **Operator Level**: Version tags, deployment manifests, and controller logs.
+* **Pod Level**: Container logs and `describe` outputs.
+* **Database Stats**: The following is collected for **every** database in the cluster:
+    * `SHOW ALL` configuration parameters.
+    * Table and Index bloat reports.
+    * Extension lists and Database version.
+    * Live/Dead tuple statistics and user table stats.
+    * Active/Idle session counts.
 
-* **Cluster Info**: Status, YAML definitions, and namespace events.
-* **Operator Info**: Version, manifests, and controller logs.
-* **Pod Diagnostics**: Logs, descriptions, and PostgreSQL configurations.
-* **Database Stats**: Bloat reports, extensions, activity counts, and table statistics for **all** databases in the cluster.
+---
 
+## 📋 Usage Example
+
+### Execution Flow:
+```
+$ kubectl edbdiag
+Enter the Namespace of the Cluster: default
+Enter the Cluster Name: postgresql-advanced-cluster
+Select Operator Variant:
+1) CNP (Cloud Native Postgres - EDB)
+2) CNPG (CloudNativePG - Community)
+Enter choice [1 or 2]: 1
+
+--- Processing Pod: postgresql-advanced-cluster-1 ---
+   -> Collecting from Database: postgres
+   -> Collecting from Database: edb
+   -> Collecting from Database: app
+...
+Collection complete: edb_diag_postgresql-advanced-cluster_20260331_132227.tar.gz
+```
+
+### Generated Result Structure:
+```
+.
+├── cluster_info
+│   ├── cluster_status.txt
+│   └── namespace_events.txt
+├── operator_info
+│   ├── logs/operator.log
+│   ├── operator_manifest.yaml
+│   └── operator_version.txt
+├── pods
+│   └── postgresql-advanced-cluster-1
+│       ├── describe_result.txt
+│       └── postgresql
+│           ├── db_app/ (Bloat, Extensions, Table Stats)
+│           ├── db_edb/ (Bloat, Extensions, Table Stats)
+│           ├── postgres.log
+│           ├── replication.out
+│           ├── running_activity.out
+│           └── show_all.out
+└── storage/ (PV and PVC listings)
+```
