@@ -4,12 +4,13 @@ set -e
 # Repository Configuration
 OWNER="erswapnil"
 REPO="cnp-diagnostic"
+# This MUST start with kubectl- to be recognized as a plugin
 BINARY="kubectl-cnp-diagnostic"
 INSTALL_PATH="/usr/local/bin"
 
 echo "Installing $BINARY from $OWNER/$REPO..."
 
-# 1. Download the tool from your main branch
+# 1. Download the tool (Ensure the file on GitHub is named kubectl-cnp-diagnostic)
 curl -sSfL "https://raw.githubusercontent.com/$OWNER/$REPO/main/$BINARY" -o "$BINARY"
 
 # 2. Make it executable
