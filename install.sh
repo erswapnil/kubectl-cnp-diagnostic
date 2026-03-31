@@ -5,7 +5,7 @@ set -e
 OWNER="erswapnil"
 REPO="cnp-diagnostic"
 # This MUST start with kubectl- to be recognized as a plugin
-BINARY="kubectl-cnp-diagnostic"
+BINARY="kubectl-edbdiag"
 INSTALL_PATH="/usr/local/bin"
 
 echo "Installing $BINARY from $OWNER/$REPO..."
